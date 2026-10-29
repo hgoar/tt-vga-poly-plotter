@@ -1,0 +1,2 @@
+date,commit,commit message,logic cells,std cells,tap cells,utilisation %,setup slack (ns),hold slack (ns),reg-to-reg setup slack (ns),power (mW),DRC errors,LVS errors,antenna violations,lint warnings,wire length (um)
+2026-10-29,1631ead,Merge pull request #1 from hgoar/view_metrics,75,300,225,5.5,7.567,8.16,none (no flip-flops),0.0275,0,0,0,0,1018
