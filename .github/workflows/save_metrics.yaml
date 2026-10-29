@@ -1,0 +1,66 @@
+# Saves the results of every successful gds run into the repo, so the logbook
+# can point at them. After each green gds run this adds a folder
+#   metrics_log/<date>_<commit>/  with metrics.json and the layout picture,
+# and appends one line to metrics_log/summary.csv (open it in Excel).
+
+name: save metrics
+
+on:
+  workflow_run:
+    workflows: [gds]
+    types: [completed]
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  save:
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: checkout repo
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_branch }}
+
+      - name: download the gds run's logs
+        uses: actions/download-artifact@v4
+        with:
+          name: GDS_logs
+          path: gds_logs
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+
+      - name: download the layout picture
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: gds_render
+          path: gds_render
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+
+      - name: save metrics into metrics_log/
+        env:
+          SHA: ${{ github.event.workflow_run.head_sha }}
+          MSG: ${{ github.event.workflow_run.head_commit.message }}
+        run: |
+          short=${SHA:0:7}
+          day=$(date -u +%Y-%m-%d)
+          dir="metrics_log/${day}_${short}"
+          mkdir -p "$dir"
+          metrics=$(find gds_logs -path '*final*' -name metrics.json | head -n 1)
+          if [ -z "$metrics" ]; then echo "metrics.json not found"; exit 1; fi
+          cp "$metrics" "$dir/metrics.json"
+          cp gds_render/gds_render.png "$dir/layout.png" 2>/dev/null || true
+          python3 .github/workflows/summarise_metrics.py "$dir/metrics.json" "$day" "$short" "$MSG" metrics_log/summary.csv
+
+      - name: commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add metrics_log
+          git commit -m "Save metrics for ${{ github.event.workflow_run.head_sha }} [skip ci]" || { echo "nothing to save"; exit 0; }
+          git pull --rebase
+          git push
