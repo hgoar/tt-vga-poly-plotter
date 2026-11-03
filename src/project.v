@@ -1,13 +1,4 @@
 /*
- * VGA polynomial plotter: step 1, axes and grid.
- *
- * Draws a grey grid, white axes through the middle of the screen and tick marks
- * along the axes. The curve is added later in section 3.
- *
- *   1. SETTINGS   Colours, axis position and grid spacing.
- *   2. WIRING     The pins and the sync generator.
- *   3. THE CURVE  (empty for now: the forward-difference engine goes here)
- *   4. DRAWING    The colour of every pixel, from where it is.
  
  * Copyright (c) 2024 Your Name
  * SPDX-License-Identifier: Apache-2.0
@@ -70,14 +61,25 @@ module tt_um_hgoar_vga_plotter (
     // ========================================================================
     // 3. THE CURVE
     // ========================================================================
- 
-    wire signed [10:0] x_value = $signed({1'b0, pix_x}) - 11'sd320;
+    
+    localparam [23:0] Y0 = (A_coefficient* 24'sd102400) + (B_coefficient * -24'sd320) + C_coefficient;
+    localparam [23:0] col_1 = (A_coefficient * -24'sd639) + B_coefficient;
+    localparam [23:0] col_2 = A_coefficient * 24'sd2;
+
+    reg signed [23:0] y_calc; 
+    reg signed [23:0] y_difference; 
+
+    always @(posedge clk) begin
+        if (~rst_n | (pix_x == 10'd799)) begin   // end of a line: back to the left edge
+            y_calc <= Y0;
+            y_difference   <= col_1;
+        end else begin                           // every other clock: one column right
+            y_calc <= y_calc + y_difference;
+            y_difference   <= y_difference + col_2;
+        end
+    end
+
     wire signed [23:0] y_value = 24'sd240 - $signed({14'b0, pix_y});
-    wire signed [23:0] x_wide = x_value;
-
-    wire signed [23:0] x_squared = x_wide * x_wide;
-    wire signed [23:0] y_calc = (A_coefficient * x_squared) + (B_coefficient * x_wide) +C_coefficient; 
-
     wire in_curve = (y_value == y_calc); 
 
     
