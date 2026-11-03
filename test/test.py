@@ -20,6 +20,9 @@ VSYNC = 0x08
 COLOUR = 0x77      # the six colour bits
 WHITE = 0x77       # RGB = 11 11 11
 GREY = 0x70        # RGB = 01 01 01  (the low bit of each colour)
+GREEN =0x22       # RGB = 00 11 00 (the colour of the plotted points))
+
+A,B,C = 3,-5,2
  
 GRID = 64          # grid spacing in pixels (change if you change the design)
 LINE = 800         # clocks per line
@@ -106,3 +109,71 @@ async def test_axes_and_grid(dut):
     # Everything else on the visible line is black
     others = [p for p in visible if p not in white and p not in grey and vis_colour[p] != 0]
     assert not others, f"unexpected coloured pixels at {others[:10]}"
+
+    # ----------------------------------------------------------------------------
+# The plotted points
+# ----------------------------------------------------------------------------
+ 
+def expected_points(row):
+    """Columns that should be green on a screen row (0 = top).
+ 
+    One point per column: column x is green on the row where its y lands.
+    """
+    height = 240 - row                         # height above the x-axis
+    out = []
+    for x in range(640):
+        X = x - 320                            # column measured from the centre
+        if A * X * X + B * X + C == height:
+            out.append(x)
+    return out
+ 
+ 
+async def find_offset(dut, lines):
+    """Reset, capture `lines` lines, and work out where column 0 is in the samples.
+ 
+    The left axis pixel is column 319, so offset = (its sample index on line 1) - 319.
+    """
+    await reset(dut)
+    s = await capture(dut, lines * LINE)
+    line1 = [None if v is None else v & COLOUR for v in s[LINE:2 * LINE]]
+    white = [i for i, c in enumerate(line1) if c == WHITE]
+    assert len(white) == 2, f"couldn't find the axis on line 1: white at {white}"
+    return s, white[0] - 319
+ 
+ 
+def green_columns(samples, row, offset):
+    """Columns that are green on a row, from the captured samples."""
+    out = []
+    for x in range(640):
+        i = row * LINE + x + offset
+        if 0 <= i < len(samples) and samples[i] is not None and samples[i] & COLOUR == GREEN:
+            out.append(x)
+    return out
+ 
+ 
+@cocotb.test()
+async def test_points_first_row(dut):
+    """The first row the curve reaches: points exactly where the formula says."""
+    row = next((r for r in range(1, 480) if expected_points(r)), None)
+    assert row is not None, "the curve has no points on screen: check A, B and C"
+    s, offset = await find_offset(dut, row + 2)
+    want = expected_points(row)
+    got = green_columns(s, row, offset)
+    dut._log.info(f"row {row}: expected points at {want}, got {got}")
+    assert got == want, f"points on row {row} are at {got}, expected {want}"
+ 
+ 
+@cocotb.test(skip=os.environ.get("GATES") == "yes")
+async def test_points_frame(dut):
+    """Whole frame: every plotted point matches the formula (RTL only, ~20 s)."""
+    s, offset = await find_offset(dut, 481)
+    missing, extra, total = [], [], 0
+    for row in range(480):
+        want = set(expected_points(row))
+        got = set(green_columns(s, row, offset))
+        total += len(want)
+        missing += [(x, row) for x in sorted(want - got)]
+        extra += [(x, row) for x in sorted(got - want)]
+    dut._log.info(f"points on screen: {total}; missing {len(missing)}; extra {len(extra)}")
+    assert not missing, f"{len(missing)} points missing, e.g. (x, row) {missing[:5]}"
+    assert not extra, f"{len(extra)} green pixels not on the curve, e.g. (x, row) {extra[:5]}"

@@ -14,7 +14,6 @@
  */
 
 `default_nettype none
-`timescale 1ns / 1ps
 
  
 module tt_um_hgoar_vga_plotter (
@@ -42,6 +41,11 @@ module tt_um_hgoar_vga_plotter (
     localparam [9:0] ORIGIN_X = 10'd320;
     localparam [9:0] ORIGIN_Y = 10'd240;
 
+    // X and y measured from the centre of the screen, y upwards)
+    localparam signed [23:0] A_coefficient = 24'sd3;
+    localparam signed [23:0] B_coefficient= -24'sd5;
+    localparam signed [23:0] C_coefficient = 24'sd2;
+
      
  
     // ========================================================================
@@ -65,10 +69,18 @@ module tt_um_hgoar_vga_plotter (
  
     // ========================================================================
     // 3. THE CURVE
-    //    The forward-difference engine will go here and produce in_curve.
     // ========================================================================
  
-    wire in_curve = 1'b0;
+    wire signed [10:0] x_value = $signed({1'b0, pix_x}) - 11'sd320;
+    wire signed [23:0] y_value = 24'sd240 - $signed({14'b0, pix_y});
+    wire signed [23:0] x_wide = x_value;
+
+    wire signed [23:0] x_squared = x_wide * x_wide;
+    wire signed [23:0] y_calc = (A_coefficient * x_squared) + (B_coefficient * x_wide) +C_coefficient; 
+
+    wire in_curve = (y_value == y_calc); 
+
+    
  
     // ========================================================================
     // 4. DRAWING
