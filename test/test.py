@@ -9,7 +9,7 @@
 # (line 1, not line 0, so that tick marks don't get in the way)
 # The checks are relative (they don't depend on exact cycle alignment),
 # so the same test also works for the gate-level simulation.
- 
+import os
 import cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import ClockCycles, RisingEdge, ReadOnly
