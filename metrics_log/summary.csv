@@ -2,3 +2,4 @@ date,commit,commit message,logic cells,std cells,tap cells,utilisation %,setup s
 2026-10-29,1631ead,Merge pull request #1 from hgoar/view_metrics,75,300,225,5.5,7.567,8.16,none (no flip-flops),0.0275,0,0,0,0,1018
 2026-10-29,6e51130,Add comprehensive tests for VGA plotter functionality including HSync and grid validation,171,396,225,12.44,9.57,0.115,none (no flip-flops),0.139,0,0,0,447,3033
 2026-11-03,cb3c9af,Add import for os module in test.py,1095,1320,225,68.56,-1.583,0.12,13.32,1.8636,0,0,0,449,20993
+2026-11-03,e62dc5b,Merge branch 'main' of https://github.com/hgoar/tt-vga-poly-plotter,518,743,225,34.84,6.698,0.108,13.65,0.6016,0,0,0,1,9582
