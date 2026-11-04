@@ -61,9 +61,19 @@ module tt_um_hgoar_vga_plotter (
     // ========================================================================
     // 3. THE CURVE
     // ========================================================================
-    
+
+
+    // Difference engine method (Babbage) y(0) = ax^^2(0) + bx(0) + c 
+    // Here because we are starting at the edge of the screen the starting y value is y(-320)
     localparam [23:0] Y0 = (A_coefficient* 24'sd102400) + (B_coefficient * -24'sd320) + C_coefficient;
+
+    // Column_1 (1) = y(x+1) - y(x) 
+    // The difference between this y value and the next y value 
     localparam [23:0] col_1 = (A_coefficient * -24'sd639) + B_coefficient;
+
+
+    // Column 2 = Column_1(2) - Column_1 (1)
+    // In a quadratic this is constant 
     localparam [23:0] col_2 = A_coefficient * 24'sd2;
 
     reg signed [23:0] y_calc; 
@@ -72,6 +82,7 @@ module tt_um_hgoar_vga_plotter (
     always @(posedge clk) begin
         if (~rst_n | (pix_x == 10'd799)) begin   // end of a line: back to the left edge
             y_calc <= Y0;
+            // The difference between y(-320) and y(-319)
             y_difference   <= col_1;
         end else begin                           // every other clock: one column right
             y_calc <= y_calc + y_difference;
@@ -79,6 +90,8 @@ module tt_um_hgoar_vga_plotter (
         end
     end
 
+    // Height of this pixel above or below the y axis 
+    // If pix_y = 0 then y_value = 240
     wire signed [23:0] y_value = 24'sd240 - $signed({14'b0, pix_y});
     wire in_curve = (y_value == y_calc); 
 
@@ -94,13 +107,17 @@ module tt_um_hgoar_vga_plotter (
     wire on_x_axis = (pix_y == 10'd239)|(pix_y == 10'd240);
 
  
-
+    // Centering y grid lines 
     wire [9:0] grid_y  = pix_y + 10'd16;
+
+    // Grid lines every 64 pixels as 100000 = 64 so if the last 6 bits of the pixel signal are 0 then the pixel is a multiple of 64 
     wire on_grid       = (pix_x[5:0] == 6'd0) | (grid_y[5:0] == 6'd0);
  
-    // Tick marks every 16 pixels, 4 pixels either side of each axis
+    // Tick marks are 4 pixels high on either side of each axis
     wire near_x_axis = (pix_y >= ORIGIN_Y - 10'd5) & (pix_y < ORIGIN_Y + 10'd4);
     wire near_y_axis = (pix_x >= ORIGIN_X - 10'd5) & (pix_x < ORIGIN_X + 10'd4);
+
+    // Tick mark every 16 pixels 
     wire on_tick     = (near_x_axis & (pix_x[3:0] == 4'd0)) |
                        (near_y_axis & (grid_y[3:0] == 4'd0));
  

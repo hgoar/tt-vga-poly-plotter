@@ -1,29 +1,44 @@
 # SPDX-FileCopyrightText: © 2024 Tiny Tapeout
 # SPDX-License-Identifier: Apache-2.0
 #
-# Tests for the VGA plotter (axes, ticks and grid).
-# They check the first two lines drawn after reset:
-#   - HSync: one pulse every 800 clocks, 96 clocks long
-#   - line 1: exactly one pair of white axis pixels, next to each other
-#   - line 1: grey grid pixels every GRID columns on each side of the axis
-# (line 1, not line 0, so that tick marks don't get in the way)
-# The checks are relative (they don't depend on exact cycle alignment),
-# so the same test also works for the gate-level simulation.
-import os
+# cocotb tests for the VGA polynomial plotter.
+#
+# The tests drive the chip's clock and reset, record what it puts on its
+# output pins (uo_out) clock by clock, and check that against what the screen
+# should show:
+#   - test_hsync:            HSync pulses once every 800 clocks, 96 clocks long
+#   - test_axes_and_grid:    on line 1, one 2-pixel white axis and grey grid
+#                            lines every GRID pixels on each side of it
+#   - test_points_first_row: the first row the curve reaches has its points in
+#                            exactly the columns the formula predicts
+#   - test_points_frame:     every plotted point on the whole screen matches the
+#                            formula (RTL only; skipped in the gate-level test)
+#
+# All checks are relative to where the white axis appears, so they don't depend
+# on exact clock alignment and also work for the gate-level (hardened) chip.
+
+
+import os   # for the GATES environment variable for the gate-level test 
 import cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import ClockCycles, RisingEdge, ReadOnly
  
 # uo_out = {hsync, B0, G0, R0, vsync, B1, G1, R1}
-HSYNC = 0x80
-VSYNC = 0x08
+
+HSYNC = 0x80        # bit 7 of uo_out is HSync (active low)
+VSYNC = 0x08        # bit 3 of uo_out is VSync (active low)
 COLOUR = 0x77      # the six colour bits
 WHITE = 0x77       # RGB = 11 11 11
-GREY = 0x70        # RGB = 01 01 01  (the low bit of each colour)
+GREY = 0x70        # RGB = 01 01 01  (the low bit of each colour for the grid)
 GREEN =0x22       # RGB = 00 11 00 (the colour of the plotted points))
 
+
+# The curve y = A*X^2 + B*X + C, in pixels from the centre of the screen.
+# These MUST match A_coefficient, B_coefficient and C_coefficient in project.v.
 A,B,C = 3,-5,2
- 
+
+
+
 GRID = 64          # grid spacing in pixels (change if you change the design)
 LINE = 800         # clocks per line
 H_SYNC_WIDTH = 96  # clocks of HSync per line
@@ -50,7 +65,8 @@ async def capture(dut, n):
         samples.append(int(v) if v.is_resolvable else None)
     return samples
  
- 
+
+# Sync timing
 @cocotb.test()
 async def test_hsync(dut):
     """HSync pulses once every 800 clocks and stays low for 96 clocks."""
@@ -58,10 +74,14 @@ async def test_hsync(dut):
     s = await capture(dut, 3 * LINE)
     hs = [None if v is None else bool(v & HSYNC) for v in s]
  
+    # Falling edges of HSync (high then low) mark the start of each sync pulse
     falls = [i for i in range(1, len(hs)) if hs[i - 1] is True and hs[i] is False]
     assert len(falls) >= 2, f"expected at least 2 HSync pulses, saw {len(falls)}"
+
+     # The gap between two pulses is the length of one line
     assert falls[1] - falls[0] == LINE, f"line length {falls[1] - falls[0]} clocks, expected {LINE}"
  
+    # Count how many clocks HSync stays low after the first falling edge
     width = 0
     for v in hs[falls[0]:]:
         if v is False:
@@ -70,6 +90,7 @@ async def test_hsync(dut):
             break
     assert width == H_SYNC_WIDTH, f"HSync pulse {width} clocks, expected {H_SYNC_WIDTH}"
  
+    # VSync only pulses near the end of the frame, so it should stay high here
     assert all(v is not None and (v & VSYNC) for v in s), "VSync went low during the first lines"
  
  
@@ -77,6 +98,7 @@ async def test_hsync(dut):
 async def test_axes_and_grid(dut):
     """Line 1: one 2-pixel white axis, and grey grid lines every GRID pixels on each side."""
     await reset(dut)
+    # Line 1 rather than line 0, because line 0 is a tick-mark row in this layout
     s = (await capture(dut, 2 * LINE))[LINE:]   # skip line 0, keep line 1
     assert all(v is not None for v in s), "uo_out has unknown (X) values"
     colour = [v & COLOUR for v in s]
@@ -123,7 +145,7 @@ def expected_points(row):
     out = []
     for x in range(640):
         X = x - 320                            # column measured from the centre
-        if A * X * X + B * X + C == height:
+        if (A * X * X) + (B * X) + C == height:
             out.append(x)
     return out
  
@@ -162,7 +184,8 @@ async def test_points_first_row(dut):
     dut._log.info(f"row {row}: expected points at {want}, got {got}")
     assert got == want, f"points on row {row} are at {got}, expected {want}"
  
- 
+ # Skipped in the gate-level run (the Makefile sets GATES=yes there), because
+# simulating every gate for a whole frame would take a very long time.
 @cocotb.test(skip=os.environ.get("GATES") == "yes")
 async def test_points_frame(dut):
     """Whole frame: every plotted point matches the formula (RTL only, ~20 s)."""
