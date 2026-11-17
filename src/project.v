@@ -108,16 +108,28 @@ module tt_um_hgoar_vga_plotter (
         end
     end
     
-    // y = 240 - pix_y (center pix_y at y = 0) 
-    wire signed [23:0] y_value = 24'sd240 - $signed({14'b0, pix_y});
+    
 
     // The next y value : to join the curve 
     wire signed [23:0] y_next = y_calc + y_difference;
+
+    // The comparitor only needs to be 9 bits as only heights -239 to +240 need to be shown
+
+    wire y_fits = (y_calc[23:8] == {16{y_calc[23]}}); 
+    wire next_fits = (y_next[23:8] == {16{y_next[23]}}); 
+
+    wire signed [8:0] y_calc_vis = y_fits ? y_calc[10:0]  : (y_calc[23] ? -9'sd256 : 9'sd255);
+    wire signed [8:0] y_next_vis = next_fits ? y_next[10:0]  : (y_next[23] ? -9'sd256 : 9'sd255);
+
+    // y = 240 - pix_y (center pix_y at y = 0) 
+    wire signed [8:0] y_value = 9'sd240 - $signed({1'b0, pix_y});
+
+
     // Join this columns y to the next colums y by lighting every pixel in between 
     // y_low = the lowest y value between this columns y and the next columns y 
-    wire signed [23:0] y_low = (y_calc < y_next)? y_calc : y_next;
+    wire signed [8:0] y_low = (y_calc_vis < y_next_vis)? y_calc_vis : y_next_vis;
     // y_high = the highest y value between this columns y and the next columns y
-    wire signed [23:0] y_high = (y_calc > y_next)? y_calc : y_next;
+    wire signed [8:0] y_high = (y_calc_vis > y_next_vis)? y_calc_vis : y_next_vis;
     
     // light all pixels between this y value and the next 
     wire in_curve = (y_value >= y_low) & (y_value <= y_high); 
