@@ -15,7 +15,7 @@
  */
 
 `default_nettype none
-`timescale 1ns / 1ps
+
 
  
 module tt_um_hgoar_vga_plotter (
