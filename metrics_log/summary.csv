@@ -8,3 +8,4 @@ date,commit,commit message,logic cells,std cells,tap cells,utilisation %,setup s
 2026-11-17,6431c58,Test: change config.json CLOCK_PERIOD,714,939,225,45.19,9.282,0.112,none (no flip-flops),0.8678,0,0,0,1,14667
 2026-11-17,974854b,Merge branch 'main' of https://github.com/hgoar/tt-vga-poly-plotter,700,925,225,45.21,2.992,0.109,2.992,1.4387,0,0,0,0,13482
 2026-11-17,df4b22a,Test: config.json CLOCK_PERIOD @40ns,700,925,225,45.21,22.992,0.109,22.992,0.7194,0,0,0,0,13482
+2026-11-17,ac9406f,Clamp y values to screen size for comparator. CLOCK_PERIOD = 20,638,863,225,41.49,1.5,0.109,1.5,1.0157,0,0,0,8,11996
