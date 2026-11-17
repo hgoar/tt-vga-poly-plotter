@@ -138,7 +138,6 @@ async def test_axes_and_grid(dut):
 # ----------------------------------------------------------------------------
  
 def expected_points(row):
-def expected_points(row):
     """Columns that should be green on a screen row (0 = top).
 
     The curve is joined up: column x is green on every row between its own y
