@@ -9,13 +9,14 @@
 #   - test_hsync:            HSync pulses once every 800 clocks, 96 clocks long
 #   - test_axes_and_grid:    on line 1, one 2-pixel white axis and grey grid
 #                            lines every GRID pixels on each side of it
-#   - test_points_first_row: the first row the curve reaches has its points in
+#   - test_points_first_row: the first row the curve reaches is green in
 #                            exactly the columns the formula predicts
-#   - test_points_frame:     every plotted point on the whole screen matches the
-#                            formula (RTL only; skipped in the gate-level test)
+#   - test_points_frame:     every curve pixel on the whole screen matches the
+#                            joined-up formula (RTL only; skipped at gate level)
 #
 # All checks are relative to where the white axis appears, so they don't depend
 # on exact clock alignment and also work for the gate-level (hardened) chip.
+
 
 
 import os   # for the GATES environment variable for the gate-level test 
@@ -129,7 +130,7 @@ async def test_axes_and_grid(dut):
     assert len(grey) >= expected_lines - 1, f"only {len(grey)} grid lines on line 1"
  
     # Everything else on the visible line is black
-    others = [p for p in visible if p not in white and p not in grey and vis_colour[p] != 0]
+    others = [p for p in visible if p not in white and p not in grey and vis_colour[p] not in (0, GREEN)]
     assert not others, f"unexpected coloured pixels at {others[:10]}"
 
     # ----------------------------------------------------------------------------
@@ -137,15 +138,19 @@ async def test_axes_and_grid(dut):
 # ----------------------------------------------------------------------------
  
 def expected_points(row):
+def expected_points(row):
     """Columns that should be green on a screen row (0 = top).
- 
-    One point per column: column x is green on the row where its y lands.
+
+    The curve is joined up: column x is green on every row between its own y
+    and the next column's y, so steep parts of the curve have no gaps.
     """
     height = 240 - row                         # height above the x-axis
     out = []
     for x in range(640):
         X = x - 320                            # column measured from the centre
-        if (A * X * X) + (B * X) + C == height:
+        y0 = A * X * X + B * X + C             # y at this column
+        y1 = A * (X + 1) ** 2 + B * (X + 1) + C    # y at the next column
+        if min(y0, y1) <= height <= max(y0, y1):
             out.append(x)
     return out
  
