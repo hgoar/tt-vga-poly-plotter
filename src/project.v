@@ -160,10 +160,15 @@ module tt_um_hgoar_vga_plotter (
     wire [1:0] G = colour[3:2];
     wire [1:0] B = colour[1:0];
  
-    assign uo_out  = {hsync, B[0], G[0], R[0], vsync, B[1], G[1], R[1]};
+   reg [7:0] uo_reg;
+    always @(posedge clk) begin
+        if (~rst_n) uo_reg <= 8'h88;     // syncs high (inactive), colour black
+        else        uo_reg <= {hsync, B[0], G[0], R[0], vsync, B[1], G[1], R[1]};
+    end
+    assign uo_out  = uo_reg;
     assign uio_out = 8'h00;
     assign uio_oe  = 8'h00;
  
-    wire _unused_ok = &{ena, uio_in, ui_in, 1'b0};
+    wire _unused_ok = &{ena, uio_in, ui_in, grid_y[9:6], 1'b0};
  
 endmodule
