@@ -7,8 +7,9 @@
  * joined up to create the 'curve' 
  *   1. SETTINGS   Colours, axis position and grid spacing.
  *   2. WIRING     The pins and the sync generator.
- *   3. THE CURVE  Difference engine + joined curve 
- *   4. DRAWING    The colour of every pixel, from where it is.
+ *   3. INTERACTIONS Lets the user change the zoom and pan to view the curve 
+ *   4. THE CURVE  Difference engine + joined curve 
+ *   5. DRAWING    The colour of every pixel, from where it is.
  
  * Copyright (c) 2024 Your Name
  * SPDX-License-Identifier: Apache-2.0
@@ -68,9 +69,30 @@ module tt_um_hgoar_vga_plotter (
         .hpos(pix_x),
         .vpos(pix_y)
     );
+
+    // ========================================================================
+    // 3. INTERACTIONS
+    // ========================================================================
+
+    // The user controls in controls.v 
+    wire [1:0]         zoom;
+    wire signed [11:0] pan_x;
+    wire signed [11:0] pan_y;
+    wire               zoom_changed; 
+
+     user_controls controls (
+        .clk(clk),
+        .rst_n(rst_n),
+        .vsync(vsync),
+        .controls(ui_in[5:0]),
+        .zoom(zoom),
+        .pan_x(pan_x),
+        .pan_y(pan_y),
+        .zoom_changed(zoom_changed)
+    );
  
     // ========================================================================
-    // 3. THE CURVE
+    // 4. THE CURVE
     // ========================================================================
     
     // Y0: Value of y at x = -320 
@@ -181,6 +203,6 @@ module tt_um_hgoar_vga_plotter (
     assign uio_out = 8'h00;
     assign uio_oe  = 8'h00;
  
-    wire _unused_ok = &{ena, uio_in, ui_in, grid_y[9:6], 1'b0};
+     wire _unused_ok = &{ena, uio_in, ui_in[7:6], grid_y[9:6], zoom, pan_x, pan_y, zoom_changed, 1'b0};
  
 endmodule

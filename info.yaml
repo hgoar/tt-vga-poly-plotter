@@ -19,17 +19,18 @@ project:
   source_files:
     - "project.v"
     - "hvsync_generator.v"
+    - "controls.v"
 
 # The pinout of your project. Leave unused pins blank. DO NOT delete or add any pins.
 # This section is for the datasheet/website. Use descriptive names (e.g., RX, TX, MOSI, SCL, SEG_A, etc.).
 pinout:
   # Inputs
-  ui[0]: ""
-  ui[1]: ""
-  ui[2]: ""
-  ui[3]: ""
-  ui[4]: ""
-  ui[5]: ""
+  ui[0]: "zoom in"
+  ui[1]: "zoom out"
+  ui[2]: "pan left"
+  ui[3]: "pan right"
+  ui[4]: "pan up"
+  ui[5]: "pan down"
   ui[6]: ""
   ui[7]: ""
 
