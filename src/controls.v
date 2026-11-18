@@ -21,6 +21,6 @@ assign pan_x = 12'sd0;
 assign pan_y = 12'sd0; 
 assign zoom_changed = 1'b0; 
 
-wire _unused_ok = &{clk, rst_n, vsync, buttons, 1'b0};
+wire _unused_ok = &{clk, rst_n, vsync, controls, 1'b0};
 
 endmodule
