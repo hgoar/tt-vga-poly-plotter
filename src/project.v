@@ -118,8 +118,8 @@ module tt_um_hgoar_vga_plotter (
     wire y_fits = (y_calc[23:8] == {16{y_calc[23]}}); 
     wire next_fits = (y_next[23:8] == {16{y_next[23]}}); 
 
-    wire signed [8:0] y_calc_vis = y_fits ? y_calc[10:0]  : (y_calc[23] ? -9'sd256 : 9'sd255);
-    wire signed [8:0] y_next_vis = next_fits ? y_next[10:0]  : (y_next[23] ? -9'sd256 : 9'sd255);
+    wire signed [8:0] y_calc_vis = y_fits ? y_calc[8:0]  : (y_calc[23] ? -9'sd256 : 9'sd255);
+    wire signed [8:0] y_next_vis = next_fits ? y_next[8:0]  : (y_next[23] ? -9'sd256 : 9'sd255);
 
     // y = 240 - pix_y (center pix_y at y = 0) 
     wire signed [8:0] y_value = 9'sd240 - $signed({1'b0, pix_y});
