@@ -122,7 +122,7 @@ module tt_um_hgoar_vga_plotter (
     wire signed [8:0] y_next_vis = next_fits ? y_next[8:0]  : (y_next[23] ? -9'sd256 : 9'sd255);
 
     // y = 240 - pix_y (center pix_y at y = 0) 
-    wire signed [8:0] y_value = 9'sd240 - $signed({1'b0, pix_y});
+    wire signed [10:0] y_value = 11'sd240 - $signed({1'b0, pix_y});
 
 
     // Join this columns y to the next colums y by lighting every pixel in between 
