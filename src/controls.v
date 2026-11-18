@@ -11,7 +11,7 @@ module user_controls (
     output wire [1:0]         zoom,
     output wire signed [11:0] pan_x,
     output wire signed [11:0] pan_y,
-    output wire               zoom_changed,
+    output wire               zoom_changed
 
 ); 
 
