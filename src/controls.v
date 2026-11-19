@@ -7,7 +7,7 @@ module user_controls (
     input  wire               clk,
     input  wire               rst_n,
     input  wire               vsync, 
-    input  wire [5:0]         controls,
+    input  wire [5:0]         contrl,
     output wire [1:0]         zoom,
     output wire signed [11:0] pan_x,
     output wire signed [11:0] pan_y,
@@ -21,6 +21,6 @@ assign pan_x = 12'sd0;
 assign pan_y = 12'sd0; 
 assign zoom_changed = 1'b0; 
 
-wire _unused_ok = &{clk, rst_n, vsync, controls, 1'b0};
+wire _unused_ok = &{clk, rst_n, vsync, contrl, 1'b0};
 
 endmodule

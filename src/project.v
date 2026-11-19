@@ -84,7 +84,7 @@ module tt_um_hgoar_vga_plotter (
         .clk(clk),
         .rst_n(rst_n),
         .vsync(vsync),
-        .controls(ui_in[5:0]),
+        .contrl(ui_in[5:0]),
         .zoom(zoom),
         .pan_x(pan_x),
         .pan_y(pan_y),
@@ -144,7 +144,8 @@ module tt_um_hgoar_vga_plotter (
     wire signed [8:0] y_next_vis = next_fits ? y_next[8:0]  : (y_next[23] ? -9'sd256 : 9'sd255);
 
     // y = 240 - pix_y (center pix_y at y = 0) 
-    wire signed [10:0] y_value = 11'sd240 - $signed({1'b0, pix_y});
+    // This pixel's height above the x-axis (-239 to +240): fits in 9 bits signed
+    wire signed [8:0] y_value = 9'sd240 - $signed(pix_y[8:0]);
 
 
     // Join this columns y to the next colums y by lighting every pixel in between 
