@@ -45,9 +45,9 @@ module tt_um_hgoar_vga_plotter (
     localparam [9:0] ORIGIN_Y = 10'd240;
 
     // X and y measured from the centre of the screen, y upwards)
-    localparam signed [23:0] A_coefficient = 24'sd3;
-    localparam signed [23:0] B_coefficient= -24'sd5;
-    localparam signed [23:0] C_coefficient = 24'sd2;
+    localparam signed [26:0] A_coefficient = 24'sd3;
+    localparam signed [26:0] B_coefficient= -24'sd5;
+    localparam signed [26:0] C_coefficient = 24'sd2;
 
      
  
@@ -95,25 +95,34 @@ module tt_um_hgoar_vga_plotter (
     // 4. THE CURVE
     // ========================================================================
     
-    // Y0: Value of y at x = -320 
-    localparam [23:0] Y0 = (A_coefficient* 24'sd102400) + (B_coefficient * -24'sd320) + C_coefficient;
+    // With the zoom function h = units per pixel e.g at most zoomed in h = 1, at most zoomed out h = 8
+    // so at most zoomed out x range is -2560 to +2560 
+    // h can work as a shift of the zoom values 
 
-    // y = 3x^2 -5x + 2 
-    //  x           y           col_1           col_2
-    //  1           0              4               6
-    //  2           4              10              6
-    //  3           14             16              6
-    //  4           30             22              6
+    wire [1:0] shift   = 2'd3 - zoom;        // x h
+    wire [2:0] shift_2 = {shift, 1'b0};      // x h^2 (2 * shift)
 
-    // 1st value of col_1 = Y1 - Y0
-    localparam [23:0] init_col_1 = (A_coefficient * -24'sd639) + B_coefficient;
-    // For a quadratic col_2 always = 2a 
-    localparam [23:0] col_2 = A_coefficient * 24'sd2;
+    // Y0: value of y at the left edge, x = -320h
+    wire signed [26:0] Y0 = ((A_coefficient * 27'sd102400) <<< shift_2)+ ((B_coefficient * -27'sd320)   <<< shift) + C_coefficient;
+
+    // y = 3x^2 - 5x + 2
+    //  x     y     col_1   col_2
+    //  1     0       4       6
+    //  2     4      10       6
+    //  3    14      16       6
+    //  4    30      22       6
+
+    // First value of col_1 = y(-319h) - y(-320h)
+    wire signed [26:0] init_col_1 = ((A_coefficient * -27'sd639) <<< shift_2)
+                                  + (B_coefficient <<< shift);
+
+    // For a quadratic, col_2 is always 2*A*h^2
+    wire signed [26:0] col_2 = (A_coefficient * 27'sd2) <<< shift_2;
 
     // current y value
-    reg signed [23:0] y_calc; 
+    reg signed [26:0] y_calc; 
     // col_1 + col_2 
-    reg signed [23:0] y_difference; 
+    reg signed [26:0] y_difference; 
 
     // 1 pix_x change per clock 
     always @(posedge clk) begin
@@ -130,18 +139,17 @@ module tt_um_hgoar_vga_plotter (
         end
     end
     
-    
+    wire signed [26:0] y_next = y_calc + y_difference;
 
-    // The next y value : to join the curve 
-    wire signed [23:0] y_next = y_calc + y_difference;
+    // Graph units -> pixels: divide by h (arithmetic shift right)
+    wire signed [26:0] y_calc_px = y_calc >>> shift;
+    wire signed [26:0] y_next_px = y_next >>> shift;
 
-    // The comparitor only needs to be 9 bits as only heights -239 to +240 need to be shown
+    wire y_fits    = (y_calc_px[26:8] == {19{y_calc_px[26]}});
+    wire next_fits = (y_next_px[26:8] == {19{y_next_px[26]}});
 
-    wire y_fits = (y_calc[23:8] == {16{y_calc[23]}}); 
-    wire next_fits = (y_next[23:8] == {16{y_next[23]}}); 
-
-    wire signed [8:0] y_calc_vis = y_fits ? y_calc[8:0]  : (y_calc[23] ? -9'sd256 : 9'sd255);
-    wire signed [8:0] y_next_vis = next_fits ? y_next[8:0]  : (y_next[23] ? -9'sd256 : 9'sd255);
+    wire signed [8:0] y_calc_vis = y_fits    ? y_calc_px[8:0] : (y_calc_px[26] ? -9'sd256 : 9'sd255);
+    wire signed [8:0] y_next_vis = next_fits ? y_next_px[8:0] : (y_next_px[26] ? -9'sd256 : 9'sd255);
 
     // y = 240 - pix_y (center pix_y at y = 0) 
     // This pixel's height above the x-axis (-239 to +240): fits in 9 bits signed
@@ -204,6 +212,6 @@ module tt_um_hgoar_vga_plotter (
     assign uio_out = 8'h00;
     assign uio_oe  = 8'h00;
  
-     wire _unused_ok = &{ena, uio_in, ui_in[7:6], grid_y[9:6], zoom, pan_x, pan_y, zoom_changed, 1'b0};
+    wire _unused_ok = &{ena, uio_in, ui_in[7:6], grid_y[9:6], pan_x, pan_y, zoom_changed, 1'b0};
  
 endmodule
