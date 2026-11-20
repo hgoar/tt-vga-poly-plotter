@@ -45,9 +45,9 @@ module tt_um_hgoar_vga_plotter (
     localparam [9:0] ORIGIN_Y = 10'd240;
 
     // X and y measured from the centre of the screen, y upwards)
-    localparam signed [26:0] A_coefficient = 24'sd3;
-    localparam signed [26:0] B_coefficient= -24'sd5;
-    localparam signed [26:0] C_coefficient = 24'sd2;
+    localparam signed [26:0] A_coefficient = 27'sd3;
+    localparam signed [26:0] B_coefficient= -27'sd5;
+    localparam signed [26:0] C_coefficient = 27'sd2;
 
      
  
