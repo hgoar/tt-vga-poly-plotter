@@ -80,7 +80,7 @@ module tt_um_hgoar_vga_plotter (
     wire signed [11:0] pan_y;
     wire               zoom_changed; 
 
-     user_controls controls (
+     user_controls controls_inst (
         .clk(clk),
         .rst_n(rst_n),
         .vsync(vsync),
