@@ -47,7 +47,7 @@ module tb_zoom_controls ();
         contrl[0] = 0; 
         frame;
 
-        repeat (3) begin
+        repeat (4) begin
             contrl[1] = 1; 
             frame; 
             frame; 
@@ -57,7 +57,3 @@ module tb_zoom_controls ();
 
         $finish;
     end
-
-
-
-endmodule 
