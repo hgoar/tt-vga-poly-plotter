@@ -55,5 +55,26 @@ module tb_zoom_controls ();
             frame;
         end
 
+        contrl[3] = 1; 
+        frame; 
+        frame; 
+        frame;
+        contrl [5] = 1; 
+        frame;
+        frame; 
+        contrl[3] = 0;
+        contrl[5] = 0; 
+        contrl[2] = 1;
+        repeat (5) begin 
+            frame; 
+        end 
+        contrl[2] = 0;
+        contrl[4] = 1; 
+        frame; 
+        frame; 
+        contrl[4] = 0;
+
         $finish;
     end
+
+endmodule
