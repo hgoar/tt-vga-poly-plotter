@@ -14,3 +14,4 @@ date,commit,commit message,logic cells,std cells,tap cells,utilisation %,setup s
 2026-11-18,37ec4ee,Changed syntax error in controls.v,645,870,225,42.06,3.529,0.109,3.529,1.2724,0,0,0,3,12272
 2026-11-19,8ac8ccb,Fixed wire widths and naming of controls in controls to fix lint warnings,638,863,225,41.49,1.473,0.107,1.473,1.0157,0,0,0,0,11983
 2026-11-20,62792d4,Zoom control button pressing logic and test bench,638,863,225,41.49,1.473,0.107,1.473,1.0157,0,0,0,0,11983
+2026-11-20,d0dbd33,Zoom logic fully working,652,877,225,42.09,1.983,0.116,1.983,1.2849,0,0,0,0,12209
