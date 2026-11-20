@@ -77,10 +77,10 @@ assign zoom = zoom_level;
 assign zoom_changed = zoom_changed_q; 
 
 localparam signed [11:0] pan_step = 12'sd2;
-localparam signed [11:0] pan_max  = 12'sd1000;
+localparam signed [11:0] pan_max  = 12'sd256;
 
-reg [11:0] pan_x_reg; 
-reg [11:0] pan_y_reg; 
+reg signed [11:0] pan_x_reg; 
+reg signed [11:0] pan_y_reg; 
 
 always @(posedge clk) begin
     if (~rst_n | zoom_changed_q) begin
