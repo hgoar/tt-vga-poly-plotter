@@ -125,54 +125,75 @@ module tt_um_hgoar_vga_plotter (
     //  4    30      22       6
 
     // First value of col_1 = y(-319h) - y(-320h)
-    wire signed [26:0] init_col_1 = ((A_coefficient * -27'sd639) <<< shift_2)
-                                  + (B_coefficient <<< shift);
+    wire signed [26:0] init_col_1 = ((A_coefficient * -27'sd639) <<< shift_2) + (B_coefficient <<< shift);
 
     // For a quadratic, col_2 is always 2*A*h^2
     wire signed [26:0] col_2 = (A_coefficient * 27'sd2) <<< shift_2;
 
-    // current y value
-    reg signed [26:0] y_calc; 
-    // col_1 + col_2 
-    reg signed [26:0] y_difference; 
+    
+    // line_y / line_step hold the curve's y and first difference at the left
+    // edge of the panned view (column pan_x - 320). When pan_x changes, they are
+    // walked one column at a time with the same forward-difference steps,
+    // during vertical blanking so the picture never tears. No multiplier needed.
+    reg signed [26:0] line_y;        // y at the left edge of the view
+    reg signed [26:0] line_step;     // y(left+1) - y(left)
+    reg signed [11:0] pan_x_done;    // the pan_x that line_y / line_step match
 
-    // 1 pix_x change per clock 
+    wire blanking = (pix_y >= 10'd480);
+
     always @(posedge clk) begin
-        if (~rst_n | (pix_x == 10'd799)) begin   // end of a line: back to the left edge
-            // y = y0 when x = -320
-            y_calc <= Y0;
-            // Y1 
-            y_difference   <= init_col_1;
-        end else begin                           // every other clock: one column right
-            // Yx = Yx-1 + col_1
-            y_calc <= y_calc + y_difference;
-            // col_1 = col_1 + col_2 
-            y_difference   <= y_difference + col_2;
+        if (~rst_n | zoom_changed) begin          // pan is back at 0: reload
+            line_y     <= Y0;
+            line_step  <= init_col_1;
+            pan_x_done <= 12'sd0;
+        end else if (blanking & (pan_x_done < pan_x)) begin   // one column right
+            line_y     <= line_y + line_step;
+            line_step  <= line_step + col_2;
+            pan_x_done <= pan_x_done + 12'sd1;
+        end else if (blanking & (pan_x_done > pan_x)) begin   // one column left
+            line_y     <= line_y - (line_step - col_2);
+            line_step  <= line_step - col_2;
+            pan_x_done <= pan_x_done - 12'sd1;
         end
     end
-    
+
+    // current y value
+    reg signed [26:0] y_calc;
+    // col_1 + col_2
+    reg signed [26:0] y_difference;
+
+    // 1 pix_x change per clock
+    always @(posedge clk) begin
+        if (~rst_n | (pix_x == 10'd799)) begin   // end of a line: back to the left edge of the view
+            y_calc       <= line_y;
+            y_difference <= line_step;
+        end else begin                           // every other clock: one column right
+            y_calc       <= y_calc + y_difference;
+            y_difference <= y_difference + col_2;
+        end
+    end
+
     wire signed [26:0] y_next = y_calc + y_difference;
 
     // Graph units -> pixels: divide by h (arithmetic shift right)
     wire signed [26:0] y_calc_px = y_calc >>> shift;
     wire signed [26:0] y_next_px = y_next >>> shift;
 
-    wire y_fits    = (y_calc_px[26:8] == {19{y_calc_px[26]}});
-    wire next_fits = (y_next_px[26:8] == {19{y_next_px[26]}});
+    // Panning up/down moves the rows, so heights now span about +-500: 11 bits signed
+    wire y_fits    = (y_calc_px[26:10] == {17{y_calc_px[26]}});
+    wire next_fits = (y_next_px[26:10] == {17{y_next_px[26]}});
 
-    wire signed [8:0] y_calc_vis = y_fits    ? y_calc_px[8:0] : (y_calc_px[26] ? -9'sd256 : 9'sd255);
-    wire signed [8:0] y_next_vis = next_fits ? y_next_px[8:0] : (y_next_px[26] ? -9'sd256 : 9'sd255);
+    wire signed [10:0] y_calc_vis = y_fits    ? y_calc_px[10:0] : (y_calc_px[26] ? -11'sd1024 : 11'sd1023);
+    wire signed [10:0] y_next_vis = next_fits ? y_next_px[10:0] : (y_next_px[26] ? -11'sd1024 : 11'sd1023);
 
-    // y = 240 - pix_y (center pix_y at y = 0) 
-    // This pixel's height above the x-axis (-239 to +240): fits in 9 bits signed
-    wire signed [8:0] y_value = 9'sd240 - $signed(pix_y[8:0]);
-
+    // This pixel's height above the x-axis, including the pan: 240 - pix_y + pan_y
+    wire signed [10:0] y_value = 11'sd240 - $signed({1'b0, pix_y}) + pan_y[10:0];
 
     // Join this columns y to the next colums y by lighting every pixel in between 
     // y_low = the lowest y value between this columns y and the next columns y 
-    wire signed [8:0] y_low = (y_calc_vis < y_next_vis)? y_calc_vis : y_next_vis;
+    wire signed [10:0] y_low = (y_calc_vis < y_next_vis)? y_calc_vis : y_next_vis;
     // y_high = the highest y value between this columns y and the next columns y
-    wire signed [8:0] y_high = (y_calc_vis > y_next_vis)? y_calc_vis : y_next_vis;
+    wire signed [10:0] y_high = (y_calc_vis > y_next_vis)? y_calc_vis : y_next_vis;
     
     // light all pixels between this y value and the next 
     wire in_curve = (y_value >= y_low) & (y_value <= y_high); 
@@ -184,20 +205,21 @@ module tt_um_hgoar_vga_plotter (
     //    One question for each thing on screen: is this pixel on it?
     // ========================================================================
  
+    // Position in the panned picture (same units as pix_x / pix_y)
+    wire [11:0] view_x = {2'b00, pix_x} + pan_x;   // moves right as you pan right
+    wire [11:0] view_y = {2'b00, pix_y} - pan_y;   // moves down as you pan up
+
     // Axes: 2 pixels thick, crossing at the origin
-    wire on_y_axis = (pix_x == 10'd319)|(pix_x == 10'd320);
-    wire on_x_axis = (pix_y == 10'd239)|(pix_y == 10'd240);
+    wire on_y_axis = (view_x == 12'd319) | (view_x == 12'd320);
+    wire on_x_axis = (view_y == 12'd239) | (view_y == 12'd240);
 
- 
+    wire [11:0] grid_y = view_y + 12'd16;
+    wire on_grid       = (view_x[5:0] == 6'd0) | (grid_y[5:0] == 6'd0);
 
-    wire [9:0] grid_y  = pix_y + 10'd16;
-    wire on_grid       = (pix_x[5:0] == 6'd0) | (grid_y[5:0] == 6'd0);
- 
     // Tick marks every 16 pixels, 4 pixels either side of each axis
-    wire near_x_axis = (pix_y >= ORIGIN_Y - 10'd5) & (pix_y < ORIGIN_Y + 10'd4);
-    wire near_y_axis = (pix_x >= ORIGIN_X - 10'd5) & (pix_x < ORIGIN_X + 10'd4);
-    wire on_tick     = (near_x_axis & (pix_x[3:0] == 4'd0)) |
-                       (near_y_axis & (grid_y[3:0] == 4'd0));
+    wire near_x_axis = (view_y >= ORIGIN_Y - 12'd5) & (view_y < ORIGIN_Y + 12'd4);
+    wire near_y_axis = (view_x >= ORIGIN_X - 12'd5) & (view_x < ORIGIN_X + 12'd4);
+    wire on_tick     = (near_x_axis & (view_x[3:0] == 4'd0)) | (near_y_axis & (grid_y[3:0] == 4'd0));
  
     // The first line that matches wins, so higher lines are drawn on top
     reg [5:0] colour;
