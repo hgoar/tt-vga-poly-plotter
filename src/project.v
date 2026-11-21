@@ -184,21 +184,20 @@ module tt_um_hgoar_vga_plotter (
     //    One question for each thing on screen: is this pixel on it?
     // ========================================================================
  
-    // Position in the panned picture (same units as pix_x / pix_y)
-    wire [11:0] view_x = {2'b00, pix_x} + pan_x;   // moves right as you pan right
-    wire [11:0] view_y = {2'b00, pix_y} - pan_y;   // moves down as you pan up
-
     // Axes: 2 pixels thick, crossing at the origin
-    wire on_y_axis = (view_x == 12'd319) | (view_x == 12'd320);
-    wire on_x_axis = (view_y == 12'd239) | (view_y == 12'd240);
+    wire on_y_axis = (pix_x == 10'd319)|(pix_x == 10'd320);
+    wire on_x_axis = (pix_y == 10'd239)|(pix_y == 10'd240);
 
-    wire [11:0] grid_y = view_y + 12'd16;
-    wire on_grid       = (view_x[5:0] == 6'd0) | (grid_y[5:0] == 6'd0);
+ 
 
+    wire [9:0] grid_y  = pix_y + 10'd16;
+    wire on_grid       = (pix_x[5:0] == 6'd0) | (grid_y[5:0] == 6'd0);
+ 
     // Tick marks every 16 pixels, 4 pixels either side of each axis
-    wire near_x_axis = (view_y >= ORIGIN_Y - 12'd5) & (view_y < ORIGIN_Y + 12'd4);
-    wire near_y_axis = (view_x >= ORIGIN_X - 12'd5) & (view_x < ORIGIN_X + 12'd4);
-    wire on_tick     = (near_x_axis & (view_x[3:0] == 4'd0)) | (near_y_axis & (grid_y[3:0] == 4'd0));
+    wire near_x_axis = (pix_y >= ORIGIN_Y - 10'd5) & (pix_y < ORIGIN_Y + 10'd4);
+    wire near_y_axis = (pix_x >= ORIGIN_X - 10'd5) & (pix_x < ORIGIN_X + 10'd4);
+    wire on_tick     = (near_x_axis & (pix_x[3:0] == 4'd0)) |
+                       (near_y_axis & (grid_y[3:0] == 4'd0));
  
     // The first line that matches wins, so higher lines are drawn on top
     reg [5:0] colour;
