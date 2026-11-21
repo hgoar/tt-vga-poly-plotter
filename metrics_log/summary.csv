@@ -24,3 +24,4 @@ date,commit,commit message,logic cells,std cells,tap cells,utilisation %,setup s
 2026-11-21,020332e,Added a testbench for coefficients.v,893,1118,225,57.28,13.928,0.107,20.499,0.7896,0,0,0,0,19217
 2026-11-21,b0e5028,removed pan functionality from project.v,1182,1407,225,75.88,12.386,0.111,16.221,0.8375,0,0,0,5,26357
 2026-11-21,b0e7cb2,Attempt #2 at fully removing pan function,894,1119,225,57.34,13.922,0.114,20.57,0.7878,0,0,0,0,19102
+2026-11-21,27a634c,Merge pull request #2 from hgoar/zoom-uart,894,1119,225,57.34,13.922,0.114,20.57,0.7878,0,0,0,0,19102
