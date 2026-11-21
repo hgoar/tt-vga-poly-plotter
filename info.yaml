@@ -20,6 +20,8 @@ project:
     - "project.v"
     - "hvsync_generator.v"
     - "controls.v"
+    - "uart_rx.v"
+    - "coefficients.v"
 
 # The pinout of your project. Leave unused pins blank. DO NOT delete or add any pins.
 # This section is for the datasheet/website. Use descriptive names (e.g., RX, TX, MOSI, SCL, SEG_A, etc.).
@@ -32,7 +34,7 @@ pinout:
   ui[4]: "pan up"
   ui[5]: "pan down"
   ui[6]: ""
-  ui[7]: ""
+  ui[7]: "UART RX"
 
   # Outputs (Tiny VGA Pmod)
   uo[0]: "R1"

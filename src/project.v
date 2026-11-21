@@ -90,6 +90,18 @@ module tt_um_hgoar_vga_plotter (
         .pan_y(pan_y),
         .zoom_changed(zoom_changed)
     );
+
+    // Coefficients sent over UART (115200 8N1) on ui[7]
+    wire signed [7:0] a_coeff, b_coeff, c_coeff;
+
+    coefficients coeff_inst (
+        .clk(clk),
+        .rst_n(rst_n),
+        .rx(ui_in[7]),
+        .a_coeff(a_coeff),
+        .b_coeff(b_coeff),
+        .c_coeff(c_coeff)
+    );
  
     // ========================================================================
     // 4. THE CURVE
@@ -212,6 +224,6 @@ module tt_um_hgoar_vga_plotter (
     assign uio_out = 8'h00;
     assign uio_oe  = 8'h00;
  
-    wire _unused_ok = &{ena, uio_in, ui_in[7:6], grid_y[9:6], pan_x, pan_y, zoom_changed, 1'b0};
+    wire _unused_ok = &{ena, uio_in, ui_in[6:2], grid_y[9:6], pan_x, pan_y, zoom_changed, a_coeff, b_coeff, c_coeff, 1'b0};
  
 endmodule
