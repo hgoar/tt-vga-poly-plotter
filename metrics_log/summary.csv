@@ -18,3 +18,4 @@ date,commit,commit message,logic cells,std cells,tap cells,utilisation %,setup s
 2026-11-20,4229db7,Updated curve drawing code to reflect the zoom: user should now be able to zoom in and out,903,1128,225,58.15,-0.611,0.112,-0.611,1.6628,0,0,0,3,20818
 2026-11-20,81bf660,fixed coefficient widths,903,1128,225,58.15,-0.611,0.112,-0.611,1.6628,0,0,0,0,20818
 2026-11-21,a989c7c,UART receiver module and uart_rx testbench,901,1126,225,57.9,15.649,0.113,16.496,0.8268,0,0,0,0,20679
+2026-11-21,ac7bb59,Added coefficient registers and updated project.v and documentation to reflect the new UART receiver and coefficient files,893,1118,225,57.28,13.928,0.107,20.499,0.7896,0,0,0,0,19217
