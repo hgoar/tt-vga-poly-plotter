@@ -3,122 +3,250 @@
 #
 # cocotb tests for the VGA polynomial plotter.
 #
-# The tests drive the chip's clock and reset, record what it puts on its
-# output pins (uo_out) clock by clock, and check that against what the screen
-# should show:
-#   - test_hsync:            HSync pulses once every 800 clocks, 96 clocks long
-#   - test_axes_and_grid:    on line 1, one 2-pixel white axis and grey grid
-#                            lines every GRID pixels on each side of it
-#   - test_points_first_row: the first row the curve reaches is green in
-#                            exactly the columns the formula predicts
-#   - test_points_frame:     every curve pixel on the whole screen matches the
-#                            joined-up formula (RTL only; skipped at gate level)
+# The chip draws y = A*x^2 + B*x + C at 1 unit per pixel, with the origin at the
+# centre of the 640 x 480 screen. A, B and C are loaded over a UART on ui[7] and
+# stored in Q5.3 fixed point (real value x 8); after reset they are 3, -5 and 2.
 #
-# All checks are relative to where the white axis appears, so they don't depend
-# on exact clock alignment and also work for the gate-level (hardened) chip.
+#   test_hsync               HSync pulses every 800 clocks and lasts 96 clocks
+#   test_axes_and_grid       line 1 has one 2-pixel white axis and grey grid lines
+#                            every 64 pixels either side of it
+#   test_curve_first_row     the first row the curve reaches is green in exactly
+#                            the columns the model predicts
+#   test_curve_frame         every green pixel on a whole frame matches the model
+#   test_coefficients        A, B, C loaded over the UART give the right curve,
+#                            for a range of coefficients, and a picture of each
+#
+# The first three only look at the output pins, so they also run on the
+# gate-level (hardened) chip. The last two use internal signals or take too long
+# at gate level, so they are skipped there (the Makefile sets GATES=yes).
 
+import os
+import struct
+import zlib
 
-
-import os   # for the GATES environment variable for the gate-level test 
 import cocotb
 from cocotb.clock import Clock
-from cocotb.triggers import ClockCycles, RisingEdge, ReadOnly
- 
+from cocotb.triggers import ClockCycles, FallingEdge, ReadOnly, RisingEdge
+
+GATE_LEVEL = os.environ.get("GATES") == "yes"
+
+# ---------------------------------------------------------------------------
+# Pins, colours and timing
+# ---------------------------------------------------------------------------
 # uo_out = {hsync, B0, G0, R0, vsync, B1, G1, R1}
+HSYNC  = 0x80          # active low
+VSYNC  = 0x08          # active low
+COLOUR = 0x77          # the six colour bits
+WHITE  = 0x77          # RGB 11 11 11: axes and ticks
+GREY   = 0x70          # RGB 01 01 01: grid
+GREEN  = 0x22          # RGB 00 11 00: the curve
 
-HSYNC = 0x80        # bit 7 of uo_out is HSync (active low)
-VSYNC = 0x08        # bit 3 of uo_out is VSync (active low)
-COLOUR = 0x77      # the six colour bits
-WHITE = 0x77       # RGB = 11 11 11
-GREY = 0x70        # RGB = 01 01 01  (the low bit of each colour for the grid)
-GREEN =0x22       # RGB = 00 11 00 (the colour of the plotted points))
+LINE         = 800     # clocks per line
+H_SYNC_WIDTH = 96      # clocks of HSync per line
+GRID         = 64      # grid spacing in pixels
+
+UART_RX      = 0x80    # ui[7] is the UART input; the line idles high
+CLKS_PER_BIT = 217     # 25 MHz / 115200 baud
+
+# ---------------------------------------------------------------------------
+# The curve model: the same maths as the chip
+# ---------------------------------------------------------------------------
+DEFAULT_COEFFICIENTS = (3, -5, 2)        # what the chip holds after reset
 
 
-# The curve y = A*X^2 + B*X + C, in pixels from the centre of the screen.
-# These MUST match A_coefficient, B_coefficient and C_coefficient in project.v.
-A,B,C = 3,-5,2
+def q53(value):
+    """Real coefficient -> the Q5.3 integer the chip stores (value x 8)."""
+    stored = value * 8
+    assert stored == int(stored) and -128 <= stored <= 127, f"{value} does not fit Q5.3"
+    return int(stored)
 
 
+def curve_heights(A, B, C):
+    """Height of the curve (pixels above the x-axis) at each column 0..640.
 
-GRID = 64          # grid spacing in pixels (change if you change the design)
-LINE = 800         # clocks per line
-H_SYNC_WIDTH = 96  # clocks of HSync per line
- 
- 
+    Mirrors the chip: 8*y = a*p^2 + b*p + c with a, b, c in Q5.3, divided by 8
+    rounding down (an arithmetic shift), then clamped to 9 bits. Column 640 is
+    included because each column is joined to the next one.
+    """
+    a, b, c = q53(A), q53(B), q53(C)
+    heights = []
+    for x in range(641):
+        p = x - 320
+        y = (a * p * p + b * p + c) >> 3
+        heights.append(max(-256, min(255, y)))
+    return heights
+
+
+def expected_green(heights, row):
+    """Columns that should be green on a screen row (0 = top).
+
+    The curve is joined up: column x is lit on every row between its own height
+    and the next column's height, so steep parts have no gaps.
+    """
+    level = 240 - row
+    return [x for x in range(640)
+            if min(heights[x], heights[x + 1]) <= level <= max(heights[x], heights[x + 1])]
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 async def reset(dut):
-    """Start a 25 MHz clock and hold the design in reset for 10 cycles."""
+    """Start the 25 MHz clock and hold the chip in reset for 10 cycles."""
     cocotb.start_soon(Clock(dut.clk, 40, unit="ns").start())
     dut.ena.value = 1
-    dut.ui_in.value = 0
+    dut.ui_in.value = UART_RX          # UART idle (high), all other inputs low
     dut.uio_in.value = 0
     dut.rst_n.value = 0
     await ClockCycles(dut.clk, 10)
     dut.rst_n.value = 1
- 
- 
-async def capture(dut, n):
-    """Return uo_out for the next n clocks (None where the value is unknown)."""
+
+
+async def capture(dut, clocks):
+    """uo_out for the next `clocks` clock cycles (None where it is unknown)."""
     samples = []
-    for _ in range(n):
+    for _ in range(clocks):
         await RisingEdge(dut.clk)
         await ReadOnly()
         v = dut.uo_out.value
         samples.append(int(v) if v.is_resolvable else None)
     return samples
- 
 
-# Sync timing
+
+async def capture_from_reset(dut, lines):
+    """Reset, capture `lines` lines of output, and find where column 0 is.
+
+    The left pixel of the white y-axis is column 319, so the offset is its sample
+    index on line 1 minus 319. Working relative to the axis means the checks
+    don't depend on the exact clock the capture started on (which differs
+    slightly at gate level).
+    """
+    await reset(dut)
+    samples = await capture(dut, lines * LINE)
+    line1 = [None if v is None else v & COLOUR for v in samples[LINE:2 * LINE]]
+    white = [i for i, c in enumerate(line1) if c == WHITE]
+    assert len(white) == 2, f"couldn't find the y-axis on line 1: white at {white}"
+    return samples, white[0] - 319
+
+
+def green_on_row(samples, row, offset):
+    """Columns that are green on a screen row, read from the captured samples."""
+    out = []
+    for x in range(640):
+        i = row * LINE + x + offset
+        if 0 <= i < len(samples) and samples[i] is not None and samples[i] & COLOUR == GREEN:
+            out.append(x)
+    return out
+
+
+async def uart_send(dut, byte):
+    """Send one byte on ui[7] like a USB-serial adapter: start bit, 8 data bits
+    least significant first, stop bit, each held for one bit time."""
+    for bit in [0] + [(byte >> i) & 1 for i in range(8)] + [1]:
+        dut.ui_in.value = bit << 7
+        await ClockCycles(dut.clk, CLKS_PER_BIT)
+
+
+async def load_coefficients(dut, A, B, C):
+    """Send 'A', value, 'B', value, 'C', value: the protocol coefficients.v expects."""
+    for letter, value in (("A", A), ("B", B), ("C", C)):
+        await uart_send(dut, ord(letter))
+        await uart_send(dut, q53(value) & 0xFF)
+
+
+async def read_curve_line(dut):
+    """The chip's clamped curve height at every column of the next full line.
+
+    Every line of a frame uses the same values, so one line (800 clocks)
+    describes the whole curve: much faster than capturing a frame.
+    """
+    top = dut.user_project
+    await FallingEdge(dut.clk)
+    while int(top.pix_x.value) != 799:       # finish this line: the next one reloads
+        await FallingEdge(dut.clk)
+    while int(top.pix_x.value) != 0:
+        await FallingEdge(dut.clk)
+    heights = []
+    for _ in range(641):
+        heights.append(top.y_calc_vis.value.to_signed())
+        await FallingEdge(dut.clk)
+    return heights
+
+
+def save_picture(path, heights):
+    """Save the frame the chip would draw for these curve heights as a PNG."""
+    width, height = 640, 480
+    rows = []
+    for y in range(height):
+        level = 240 - y
+        row = bytearray([0])                              # PNG filter byte
+        for x in range(width):
+            lo, hi = sorted((heights[x], heights[x + 1]))
+            if lo <= level <= hi:
+                rgb = (0, 255, 0)
+            elif x in (319, 320) or y in (239, 240):
+                rgb = (255, 255, 255)
+            elif x % GRID == 0 or (y + 16) % GRID == 0:
+                rgb = (85, 85, 85)
+            else:
+                rgb = (0, 0, 0)
+            row += bytes(rgb)
+        rows.append(bytes(row))
+
+    def chunk(kind, data):
+        return (struct.pack(">I", len(data)) + kind + data
+                + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF))
+
+    png = (b"\x89PNG\r\n\x1a\n"
+           + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+           + chunk(b"IDAT", zlib.compress(b"".join(rows)))
+           + chunk(b"IEND", b""))
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "wb") as f:
+        f.write(png)
+
+
+# ---------------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------------
 @cocotb.test()
 async def test_hsync(dut):
     """HSync pulses once every 800 clocks and stays low for 96 clocks."""
     await reset(dut)
-    s = await capture(dut, 3 * LINE)
-    hs = [None if v is None else bool(v & HSYNC) for v in s]
- 
-    # Falling edges of HSync (high then low) mark the start of each sync pulse
+    samples = await capture(dut, 3 * LINE)
+    hs = [None if v is None else bool(v & HSYNC) for v in samples]
+
+    # Falling edges (high then low) mark the start of each sync pulse
     falls = [i for i in range(1, len(hs)) if hs[i - 1] is True and hs[i] is False]
     assert len(falls) >= 2, f"expected at least 2 HSync pulses, saw {len(falls)}"
+    assert falls[1] - falls[0] == LINE, f"line length {falls[1] - falls[0]}, expected {LINE}"
 
-     # The gap between two pulses is the length of one line
-    assert falls[1] - falls[0] == LINE, f"line length {falls[1] - falls[0]} clocks, expected {LINE}"
- 
-    # Count how many clocks HSync stays low after the first falling edge
     width = 0
     for v in hs[falls[0]:]:
-        if v is False:
-            width += 1
-        else:
+        if v is not False:
             break
+        width += 1
     assert width == H_SYNC_WIDTH, f"HSync pulse {width} clocks, expected {H_SYNC_WIDTH}"
- 
-    # VSync only pulses near the end of the frame, so it should stay high here
-    assert all(v is not None and (v & VSYNC) for v in s), "VSync went low during the first lines"
- 
- 
+
+    # VSync only pulses near the end of the frame, so it stays high here
+    assert all(v is not None and v & VSYNC for v in samples), "VSync went low in the first lines"
+
+
 @cocotb.test()
 async def test_axes_and_grid(dut):
-    """Line 1: one 2-pixel white axis, and grey grid lines every GRID pixels on each side."""
+    """Line 1: one 2-pixel white axis, grey grid lines every GRID pixels either side."""
     await reset(dut)
-    # Line 1 rather than line 0, because line 0 is a tick-mark row in this layout
-    s = (await capture(dut, 2 * LINE))[LINE:]   # skip line 0, keep line 1
-    assert all(v is not None for v in s), "uo_out has unknown (X) values"
-    colour = [v & COLOUR for v in s]
- 
+    line1 = (await capture(dut, 2 * LINE))[LINE:]     # line 0 is a tick row, so use line 1
+    assert all(v is not None for v in line1), "uo_out has unknown (X) values"
+    colour = [v & COLOUR for v in line1]
+
     white = [i for i, c in enumerate(colour) if c == WHITE]
-    grey = [i for i, c in enumerate(colour) if c == GREY]
-    dut._log.info(f"white pixels at {white}")
-    dut._log.info(f"grey pixels at {grey}")
- 
-    # The vertical axis: exactly two white pixels, side by side
     assert len(white) == 2 and white[1] == white[0] + 1, f"axis pixels {white}"
     left, right = white
-    # The 640 visible pixels, counted from the axis. The capture can start a
-    # clock or so off the start of the line, so wrap round the 800-clock line.
-    visible = range(left - 319, left + 321)
-    vis_colour = {p: colour[p % LINE] for p in visible}
-    grey = [p for p in visible if vis_colour[p] == GREY]
- 
-    # Grid: lines exactly GRID apart on each side, the nearest within GRID of the axis
+
+    # The 640 visible pixels, counted from the axis (wrapping round the 800-clock line)
+    visible = {p: colour[p % LINE] for p in range(left - 319, left + 321)}
+    grey = [p for p, c in visible.items() if c == GREY]
     lhs = [g for g in grey if g < left]
     rhs = [g for g in grey if g > right]
     assert lhs and rhs, "no grid lines on one side of the axis"
@@ -126,81 +254,85 @@ async def test_axes_and_grid(dut):
         gaps = [b - a for a, b in zip(side, side[1:])]
         assert all(g == GRID for g in gaps), f"{name} grid spacing {gaps}, expected {GRID}"
     assert left - lhs[-1] <= GRID and rhs[0] - right <= GRID, "grid not lined up with the axis"
-    expected_lines = 640 // GRID - 1
-    assert len(grey) >= expected_lines - 1, f"only {len(grey)} grid lines on line 1"
- 
-    # Everything else on the visible line is black
-    others = [p for p in visible if p not in white and p not in grey and vis_colour[p] not in (0, GREEN)]
-    assert not others, f"unexpected coloured pixels at {others[:10]}"
 
-    # ----------------------------------------------------------------------------
-# The plotted points
-# ----------------------------------------------------------------------------
- 
-def expected_points(row):
-    """Columns that should be green on a screen row (0 = top).
+    others = [p for p, c in visible.items() if c not in (0, WHITE, GREY, GREEN)]
+    assert not others, f"unexpected colours at {others[:10]}"
 
-    The curve is joined up: column x is green on every row between its own y
-    and the next column's y, so steep parts of the curve have no gaps.
-    """
-    height = 240 - row                         # height above the x-axis
-    out = []
-    for x in range(640):
-        X = x - 320                            # column measured from the centre
-        y0 = A * X * X + B * X + C             # y at this column
-        y1 = A * (X + 1) ** 2 + B * (X + 1) + C    # y at the next column
-        if min(y0, y1) <= height <= max(y0, y1):
-            out.append(x)
-    return out
- 
- 
-async def find_offset(dut, lines):
-    """Reset, capture `lines` lines, and work out where column 0 is in the samples.
- 
-    The left axis pixel is column 319, so offset = (its sample index on line 1) - 319.
-    """
-    await reset(dut)
-    s = await capture(dut, lines * LINE)
-    line1 = [None if v is None else v & COLOUR for v in s[LINE:2 * LINE]]
-    white = [i for i, c in enumerate(line1) if c == WHITE]
-    assert len(white) == 2, f"couldn't find the axis on line 1: white at {white}"
-    return s, white[0] - 319
- 
- 
-def green_columns(samples, row, offset):
-    """Columns that are green on a row, from the captured samples."""
-    out = []
-    for x in range(640):
-        i = row * LINE + x + offset
-        if 0 <= i < len(samples) and samples[i] is not None and samples[i] & COLOUR == GREEN:
-            out.append(x)
-    return out
- 
- 
+
 @cocotb.test()
-async def test_points_first_row(dut):
-    """The first row the curve reaches: points exactly where the formula says."""
-    row = next((r for r in range(1, 480) if expected_points(r)), None)
-    assert row is not None, "the curve has no points on screen: check A, B and C"
-    s, offset = await find_offset(dut, row + 2)
-    want = expected_points(row)
-    got = green_columns(s, row, offset)
-    dut._log.info(f"row {row}: expected points at {want}, got {got}")
-    assert got == want, f"points on row {row} are at {got}, expected {want}"
- 
- # Skipped in the gate-level run (the Makefile sets GATES=yes there), because
-# simulating every gate for a whole frame would take a very long time.
-@cocotb.test(skip=os.environ.get("GATES") == "yes")
-async def test_points_frame(dut):
-    """Whole frame: every plotted point matches the formula (RTL only, ~20 s)."""
-    s, offset = await find_offset(dut, 481)
-    missing, extra, total = [], [], 0
+async def test_curve_first_row(dut):
+    """The first row the default curve reaches is green exactly where the model says."""
+    heights = curve_heights(*DEFAULT_COEFFICIENTS)
+    row = next((r for r in range(1, 480) if expected_green(heights, r)), None)
+    assert row is not None, "the default curve has no points on screen"
+
+    samples, offset = await capture_from_reset(dut, row + 2)
+    want = expected_green(heights, row)
+    got = green_on_row(samples, row, offset)
+    dut._log.info(f"row {row}: expected {want}, got {got}")
+    assert got == want, f"row {row}: green at {got}, expected {want}"
+
+
+@cocotb.test(skip=GATE_LEVEL)
+async def test_curve_frame(dut):
+    """Whole frame: every green pixel matches the default curve (RTL only)."""
+    heights = curve_heights(*DEFAULT_COEFFICIENTS)
+    samples, offset = await capture_from_reset(dut, 481)
+    missing, extra = [], []
     for row in range(480):
-        want = set(expected_points(row))
-        got = set(green_columns(s, row, offset))
-        total += len(want)
+        want = set(expected_green(heights, row))
+        got = set(green_on_row(samples, row, offset))
         missing += [(x, row) for x in sorted(want - got)]
         extra += [(x, row) for x in sorted(got - want)]
-    dut._log.info(f"points on screen: {total}; missing {len(missing)}; extra {len(extra)}")
-    assert not missing, f"{len(missing)} points missing, e.g. (x, row) {missing[:5]}"
+    dut._log.info(f"missing {len(missing)}, extra {len(extra)}")
+    assert not missing, f"{len(missing)} curve pixels missing, e.g. (x, row) {missing[:5]}"
     assert not extra, f"{len(extra)} green pixels not on the curve, e.g. (x, row) {extra[:5]}"
+
+
+# Coefficients covering the whole Q5.3 range (-16 to +15.875, steps of 0.125)
+COEFFICIENT_SETS = [
+    # name              A        B        C
+    ("baseline",         3,      -5,       2),
+    ("smallest_A",       0.125,   0,       0),
+    ("largest_A",       15.875,   0,       0),
+    ("most_negative_A", -16,      0,       0),
+    ("downward_peak",   -0.5,     0,       7),
+    ("line_y_eq_x",      0,       1,       0),
+    ("steepest_line",    0,      15.875,   0),
+    ("highest_flat",     0,       0,      15.875),
+    ("lowest_flat",      0,       0,     -16),
+    ("B_moves_vertex",   1,       8,       0),
+    ("ordinary_curve",   0.5,    -4,      -6),
+    ("all_maximum",     15.875,  15.875,  15.875),
+    ("all_minimum",    -16,     -16,     -16),
+]
+
+
+@cocotb.test(skip=GATE_LEVEL)
+async def test_coefficients(dut):
+    """Load each coefficient set over the UART, then capture a whole frame from the
+    output pins. Checks the registers and every green pixel against the model, and
+    saves the frame exactly as the chip drew it to output/. About 35 s per set."""
+    await reset(dut)
+    top = dut.user_project
+
+    for name, A, B, C in COEFFICIENT_SETS:
+        await load_coefficients(dut, A, B, C)
+
+        stored = [r.value.to_signed() for r in
+                  (top.coeff_inst.a_reg, top.coeff_inst.b_reg, top.coeff_inst.c_reg)]
+        assert stored == [q53(A), q53(B), q53(C)], f"{name}: registers hold {stored}"
+
+        # A whole new frame, drawn entirely with the new coefficients
+        samples, offset = await capture_next_frame(dut)
+        save_frame_png(f"output/coefficients_{name}.png", samples, offset)
+
+        heights = curve_heights(A, B, C)
+        wrong = []
+        for row in range(480):
+            want = set(expected_green(heights, row))
+            got = set(green_on_row(samples, row, offset))
+            wrong += [(x, row) for x in sorted(want ^ got)]
+        green = sum(len(green_on_row(samples, row, offset)) for row in range(480))
+        dut._log.info(f"{name:16s} A={A:<7} B={B:<7} C={C:<7} green pixels: {green}")
+        assert not wrong, f"{name}: {len(wrong)} pixels differ from the model, e.g. (x, row) {wrong[:5]}"
