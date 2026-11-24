@@ -14,7 +14,8 @@
 #                            the columns the model predicts
 #   test_curve_frame         every green pixel on a whole frame matches the model
 #   test_coefficients        A, B, C loaded over the UART give the right curve,
-#                            for a range of coefficients, and a picture of each
+#                            for a range of coefficients; saves each frame as the
+#                            chip drew it on its output pins
 #
 # The first three only look at the output pins, so they also run on the
 # gate-level (hardened) chip. The last two use internal signals or take too long
@@ -154,44 +155,28 @@ async def load_coefficients(dut, A, B, C):
         await uart_send(dut, q53(value) & 0xFF)
 
 
-async def read_curve_line(dut):
-    """The chip's clamped curve height at every column of the next full line.
-
-    Every line of a frame uses the same values, so one line (800 clocks)
-    describes the whole curve: much faster than capturing a frame.
-    """
-    top = dut.user_project
-    await FallingEdge(dut.clk)
-    while int(top.pix_x.value) != 799:       # finish this line: the next one reloads
-        await FallingEdge(dut.clk)
-    while int(top.pix_x.value) != 0:
-        await FallingEdge(dut.clk)
-    heights = []
-    for _ in range(641):
-        heights.append(top.y_calc_vis.value.to_signed())
-        await FallingEdge(dut.clk)
-    return heights
+def pin_colour(v):
+    """Decode one uo_out value into an (R, G, B) colour, 0-255 per channel.
+    uo_out = {hsync, B0, G0, R0, vsync, B1, G1, R1}: each colour is 2 bits."""
+    if v is None:
+        return (255, 0, 255)                      # unknown (X): magenta, easy to spot
+    r = ((v >> 0) & 1) << 1 | ((v >> 4) & 1)
+    g = ((v >> 1) & 1) << 1 | ((v >> 5) & 1)
+    b = ((v >> 2) & 1) << 1 | ((v >> 6) & 1)
+    return (r * 85, g * 85, b * 85)
 
 
-def save_picture(path, heights):
-    """Save the frame the chip would draw for these curve heights as a PNG."""
+def save_frame_png(path, samples, offset):
+    """Save a whole frame exactly as the chip drew it on its output pins."""
     width, height = 640, 480
     rows = []
-    for y in range(height):
-        level = 240 - y
-        row = bytearray([0])                              # PNG filter byte
+    for row in range(height):
+        line = bytearray([0])                     # PNG filter byte
         for x in range(width):
-            lo, hi = sorted((heights[x], heights[x + 1]))
-            if lo <= level <= hi:
-                rgb = (0, 255, 0)
-            elif x in (319, 320) or y in (239, 240):
-                rgb = (255, 255, 255)
-            elif x % GRID == 0 or (y + 16) % GRID == 0:
-                rgb = (85, 85, 85)
-            else:
-                rgb = (0, 0, 0)
-            row += bytes(rgb)
-        rows.append(bytes(row))
+            i = row * LINE + x + offset
+            v = samples[i] if 0 <= i < len(samples) else None
+            line += bytes(pin_colour(v))
+        rows.append(bytes(line))
 
     def chunk(kind, data):
         return (struct.pack(">I", len(data)) + kind + data
@@ -204,6 +189,22 @@ def save_picture(path, heights):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "wb") as f:
         f.write(png)
+
+
+async def capture_next_frame(dut):
+    """Wait for the start of the next frame, then capture it from uo_out.
+
+    Returns the samples and the offset of column 0 (found from the y-axis on
+    line 1, the same way as capture_from_reset)."""
+    top = dut.user_project
+    await FallingEdge(dut.clk)
+    while not (int(top.pix_x.value) == 0 and int(top.pix_y.value) == 0):
+        await FallingEdge(dut.clk)
+    samples = await capture(dut, 480 * LINE + 2)
+    line1 = [None if v is None else v & COLOUR for v in samples[LINE:2 * LINE]]
+    white = [i for i, c in enumerate(line1) if c == WHITE]
+    assert len(white) == 2, f"couldn't find the y-axis on line 1: white at {white}"
+    return samples, white[0] - 319
 
 
 # ---------------------------------------------------------------------------
@@ -285,6 +286,7 @@ async def test_curve_frame(dut):
         missing += [(x, row) for x in sorted(want - got)]
         extra += [(x, row) for x in sorted(got - want)]
     dut._log.info(f"missing {len(missing)}, extra {len(extra)}")
+    save_frame_png("output/default_curve.png", samples, offset)
     assert not missing, f"{len(missing)} curve pixels missing, e.g. (x, row) {missing[:5]}"
     assert not extra, f"{len(extra)} green pixels not on the curve, e.g. (x, row) {extra[:5]}"
 
