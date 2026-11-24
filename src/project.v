@@ -140,7 +140,7 @@ module tt_um_hgoar_vga_plotter (
             // y = y0 when x = -320
             y_calc <= Y0;
             // Y1 
-            y_difference   <= init_col_1;
+            y_difference   <= col_1;
         end else begin                           // every other clock: one column right
             // Yx = Yx-1 + col_1
             y_calc <= y_calc + y_difference;
