@@ -143,6 +143,7 @@ def green_on_row(samples, row, offset):
 async def uart_send(dut, byte):
     """Send one byte on ui[7] like a USB-serial adapter: start bit, 8 data bits
     least significant first, stop bit, each held for one bit time."""
+    await FallingEdge(dut.clk)              # leave any ReadOnly phase before writing
     for bit in [0] + [(byte >> i) & 1 for i in range(8)] + [1]:
         dut.ui_in.value = bit << 7
         await ClockCycles(dut.clk, CLKS_PER_BIT)
