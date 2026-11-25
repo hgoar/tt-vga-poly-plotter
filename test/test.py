@@ -255,3 +255,102 @@ async def test_curve_frame(dut):
                   f"missing {len(missing)}, extra {len(extra)}")
     assert not missing, f"{len(missing)} curve pixels missing, e.g. (x, row) {missing[:5]}"
     assert not extra, f"{len(extra)} green pixels not on the curve, e.g. (x, row) {extra[:5]}"
+
+# ---------------------------------------------------------------------------
+# Coefficient loading tests: the chip has three registers, one for each coefficient, and a load pin to store the value on uio_in into the selected register.    
+# ---------------------------------------------------------------------------
+SELECT = {"A": 0b00, "B": 0b01, "C": 0b10}
+
+
+def stored(dut):
+    """The three coefficient registers in coefficients.v, as real values (fixed point 5.3 / 8)."""
+    c = dut.user_project.coeff_inst
+    return [r.value.to_signed() / 8 for r in (c.a_coeff_reg, c.b_coeff_reg, c.c_coeff_reg)]
+
+
+def set_pins(dut, select, load):
+    """ui[1:0] = which coefficient, ui[2] = load."""
+    dut.ui_in.value = (load << 2) | select
+
+
+async def load_coefficient(dut, name, value):
+    """Do what the microcontroller does: put the value on uio, choose the
+    coefficient on ui[1:0], then press and release load (ui[2])."""
+    sel = SELECT.get(name, 0b11)
+    dut.uio_in.value = q53(value) & 0xFF
+    set_pins(dut, sel, 0)
+    await ClockCycles(dut.clk, 3)
+    set_pins(dut, sel, 1)                  # press load
+    await ClockCycles(dut.clk, 5)
+    set_pins(dut, sel, 0)                  # release
+    await ClockCycles(dut.clk, 5)
+
+
+@cocotb.test(skip=GATE_LEVEL)
+async def test_coefficient_loading(dut):
+    """Coefficients load from the pins: one register per press, others unchanged."""
+    await reset(dut)
+    await ClockCycles(dut.clk, 2)
+    assert stored(dut) == [3, -5, 2], f"after reset: {stored(dut)}"
+
+    await load_coefficient(dut, "A", 2.5)
+    assert stored(dut) == [2.5, -5, 2], f"after loading A: {stored(dut)}"
+
+    await load_coefficient(dut, "B", -2)
+    assert stored(dut) == [2.5, -2, 2], f"after loading B: {stored(dut)}"
+
+    await load_coefficient(dut, "C", 1)
+    assert stored(dut) == [2.5, -2, 1], f"after loading C: {stored(dut)}"
+
+    await load_coefficient(dut, "none", 7)  # select = 11: nothing changes
+    assert stored(dut) == [2.5, -2, 1], f"select = 11 changed something: {stored(dut)}"
+
+    # Holding load down stores once, even if the value changes while held
+    dut.uio_in.value = q53(0.125)
+    set_pins(dut, SELECT["A"], 1)
+    await ClockCycles(dut.clk, 5)
+    dut.uio_in.value = q53(0.25)
+    await ClockCycles(dut.clk, 50)
+    set_pins(dut, SELECT["A"], 0)
+    await ClockCycles(dut.clk, 5)
+    assert stored(dut)[0] == 0.125, f"held load stored again: A = {stored(dut)[0]}"
+
+
+@cocotb.test(skip=GATE_LEVEL)
+async def test_coefficients_waveform(dut):
+    """The same sequence as tb_coefficients.v, driven through the chip's pins:
+    uio_in = value, ui_in[1:0] = select, ui_in[2] = load."""
+    # Reset: expect A = 3 (00011.000), B = -5 (11011.000), C = 2 (00010.000)
+    await reset(dut)                         # 10 clocks in reset, all pins 0
+    await ClockCycles(dut.clk, 10)
+    assert stored(dut) == [3, -5, 2], f"after reset: {stored(dut)}"
+
+    # A = 2.5: value and load set together, load held for 10 clocks, then released
+    dut.uio_in.value = 0b00010100
+    set_pins(dut, select=0b00, load=1)
+    await ClockCycles(dut.clk, 10)
+    set_pins(dut, select=0b00, load=0)
+    assert stored(dut) == [2.5, -5, 2], f"after A: {stored(dut)}"
+
+    # B = -2: select and value first, a delay, then load pressed for 10 clocks
+    dut.uio_in.value = 0b11110000
+    set_pins(dut, select=0b01, load=0)
+    await ClockCycles(dut.clk, 10)
+    assert stored(dut) == [2.5, -5, 2], "B changed before load was pressed"
+    set_pins(dut, select=0b01, load=1)
+    await ClockCycles(dut.clk, 10)
+    assert stored(dut) == [2.5, -2, 2], f"after B: {stored(dut)}"
+
+    # C = 1: select and value change while load is STILL held from B.
+    # No new press, so nothing should be stored yet.
+    dut.uio_in.value = 0b00001000
+    set_pins(dut, select=0b10, load=1)
+    await ClockCycles(dut.clk, 10)
+    assert stored(dut) == [2.5, -2, 2], "C stored without a new press"
+
+    # Release, wait, press again: now C is stored
+    set_pins(dut, select=0b10, load=0)
+    await ClockCycles(dut.clk, 10)
+    set_pins(dut, select=0b10, load=1)
+    await ClockCycles(dut.clk, 20)
+    assert stored(dut) == [2.5, -2, 1], f"after C: {stored(dut)}"
