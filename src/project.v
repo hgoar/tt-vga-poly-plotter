@@ -1,17 +1,28 @@
 /*
- * VGA polynomial plotter: step 2, draw a curve.
+ * VGA polynomial plotter
  *
- * Draws a grey grid, white axes through the middle of the screen and tick marks
- * along the axes. In this version each pixel corresponds to an (x,y) position 
- * with a 1:1 ratio. These green points where pix_x = x and pix_y = y are then 
- * joined up to create the 'curve' 
- *   1. SETTINGS   Colours, axis position and grid spacing.
+ * Draws the curve y = A*x^2 + B*x + C on a 640 x 480 VGA screen, over a grey
+ * grid with white axes through the centre and tick marks along the axes.
+ *
+ * Scale: 32 pixels per unit, so the screen shows x from -10 to +10 and
+ * y from -7.5 to +7.5. Grid lines are every 2 units (64 pixels) and tick
+ * marks every 1 unit (32 pixels).
+ *
+ * The coefficients are in Q5.3 fixed point (8 bits: the real value x 8), so
+ * they can range from -16 to +15.875 in steps of 0.125. For now they are fixed
+ * at A = 3, B = -5, C = 2.
+ *
+ * The curve is calculated by forward differencing (a difference engine): one
+ * column per clock, using two adders instead of multipliers. Each column is
+ * joined to the next by lighting every pixel between their heights, so steep
+ * parts of the curve have no gaps.
+ *
+ *   1. SETTINGS   Colours, axis position and the coefficients.
  *   2. WIRING     The pins and the sync generator.
- *   3. INTERACTIONS Lets the user change the zoom and pan to view the curve 
- *   4. THE CURVE  Difference engine + joined curve 
+ *   4. THE CURVE  Difference engine and joined curve.
  *   5. DRAWING    The colour of every pixel, from where it is.
- 
- * Copyright (c) 2024 Your Name
+ *
+ * Copyright (c) 2024 Hermione Goar
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -43,6 +54,10 @@ module tt_um_hgoar_vga_plotter (
     // Where the axes cross: the middle of the 640 x 480 screen
     localparam [9:0] ORIGIN_X = 10'd320;
     localparam [9:0] ORIGIN_Y = 10'd240;
+
+    localparam signed [7:0] coeff_a =  8'sd24;    //  3 x 8
+    localparam signed [7:0] coeff_b = -8'sd40;    // -5 x 8
+    localparam signed [7:0] coeff_c =  8'sd16;    //  2 x 8
  
     // ========================================================================
     // 2. WIRING
@@ -62,61 +77,23 @@ module tt_um_hgoar_vga_plotter (
         .hpos(pix_x),
         .vpos(pix_y)
     );
-
-    // ========================================================================
-    // 3. INTERACTIONS
-    // ========================================================================
-
-    // The user controls in controls.v 
-    wire [1:0]         zoom;
-    wire signed [11:0] pan_x;
-    wire signed [11:0] pan_y;
-    wire               zoom_changed; 
-
-     user_controls controls_inst (
-        .clk(clk),
-        .rst_n(rst_n),
-        .vsync(vsync),
-        .contrl(ui_in[5:0]),
-        .zoom(zoom),
-        .pan_x(pan_x),
-        .pan_y(pan_y),
-        .zoom_changed(zoom_changed)
-    );
-
-    // Coefficients sent over UART (115200 8N1) on ui[7]
-    wire signed [7:0] a_coeff, b_coeff, c_coeff;
-
-    coefficients coeff_inst (
-        .clk(clk),
-        .rst_n(rst_n),
-        .rx(ui_in[7]),
-        .a_coeff(a_coeff),
-        .b_coeff(b_coeff),
-        .c_coeff(c_coeff)
-    );
  
     // ========================================================================
     // 4. THE CURVE
     // ========================================================================
     
-    // At the current scale of 1 unit per pixel. 
-    // Coefficients: A, B and C arrive from coefficients.v in 5.3 fixed point,
-    // which means each one is stored as (real value x 8), for example A = 2.5 is
-    // stored as 20. Because every coefficient is x8, every value worked out
-    // below (Y0, col_1, col_2, y_calc) is also 8 times the real y value. The
-    // divide by 8 happens once, at the end, with a shift right by 3.
-    wire signed [25:0] A_coefficient = {{18{a_coeff[7]}}, a_coeff};   
-    wire signed [25:0] B_coefficient = {{18{b_coeff[7]}}, b_coeff};  
-    wire signed [25:0] C_coefficient = {{18{c_coeff[7]}}, c_coeff}; 
+    // At the current scale of 32 pixels per unit, the screen shows x from -10 to 10
+    // The engine starts at the leftmost pixel = -320 where x = -10 and steps one pixel per clock.
+    // The coefficients widened to the width of each sum (copying the sign bit),
+    // so every multiply and add below is done at that width and stays signed
+    wire signed [24:0] a_25 = {{17{coeff_a[7]}}, coeff_a};
+    wire signed [24:0] b_25 = {{17{coeff_b[7]}}, coeff_b};
+    wire signed [24:0] c_25 = {{17{coeff_c[7]}}, coeff_c};
+    wire signed [17:0] a_18 = {{10{coeff_a[7]}}, coeff_a};
+    wire signed [17:0] b_18 = {{10{coeff_b[7]}}, coeff_b};
 
-    
-    wire signed [25:0] Y0    = (A_coefficient * 26'sd102400) + (B_coefficient * -26'sd320) + C_coefficient;
-    
-     
-    
-   
-
+    // Multiplying by fixed numbers
+    wire signed [24:0] Y0    = (a_25 * 25'sd102400) - (b_25 * 25'sd10240) + (c_25 * 25'sd1024);       
     // y = 3x^2 - 5x + 2
     //  x     y     col_1   col_2
     //  1     0       4       6
@@ -125,42 +102,36 @@ module tt_um_hgoar_vga_plotter (
     //  4    30      22       6
 
     // First value of col_1 = y(-319h) - y(-320h)
-    wire signed [25:0] col_1 = (A_coefficient * -26'sd639) + B_coefficient;
+    wire signed [17:0] col_1 = (a_18 * -18'sd639) + (b_18 * 18'sd32);   
     // For a quadratic, col_2 is always 2*A*h^2
-    wire signed [25:0] col_2 = A_coefficient * 26'sd2;  
+    wire signed [17:0] col_2 = a_18 * 18'sd2;
 
     // current y value
-    reg signed [25:0] y_calc; 
+    reg signed [24:0] y_calc; 
     // col_1 + col_2 
-    reg signed [25:0] y_difference; 
+    reg signed [17:0] y_difference; 
 
-    // 1 pix_x change per clock 
-    always @(posedge clk) begin
-        if (~rst_n |(pix_x == 10'd799)) begin   // end of a line: back to the left edge
-            // y = y0 when x = -320
-            y_calc <= Y0;
-            // Y1 
-            y_difference   <= col_1;
-        end else begin                           // every other clock: one column right
-            // Yx = Yx-1 + col_1
-            y_calc <= y_calc + y_difference;
-            // col_1 = col_1 + col_2 
-            y_difference   <= y_difference + col_2;
+   always @(posedge clk) begin
+        if (~rst_n | (pix_x == 10'd799)) begin                 // back to the left edge, p = -320
+            y_calc       <= Y0;
+            y_difference <= col_1;
+        end else begin                               // one column right
+            y_calc       <= y_calc + {{7{y_difference[17]}}, y_difference};
+            y_difference <= y_difference + col_2;
         end
     end
-    
-    wire signed [25:0] y_next = y_calc + y_difference;
+    wire signed [24:0] y_next = y_calc + {{7{y_difference[17]}}, y_difference};
 
     // Back to pixels: divide by 8 to convert to fixed point binary number aka real value 
-    wire signed [25:0] y_calc_px = y_calc >>> 3;
-    wire signed [25:0] y_next_px = y_next >>> 3;
+    wire signed [24:0] y_calc_px = y_calc >>> 8;
+    wire signed [24:0] y_next_px = y_next >>> 8;
 
 
-    wire y_fits    = (y_calc_px[25:8] == {18{y_calc_px[25]}});
-    wire next_fits = (y_next_px[25:8] == {18{y_next_px[25]}});
+    wire y_fits    = (y_calc_px[24:8] == {17{y_calc_px[24]}});
+    wire next_fits = (y_next_px[24:8] == {17{y_next_px[24]}});
 
-    wire signed [8:0] y_calc_vis = y_fits    ? y_calc_px[8:0] : (y_calc_px[25] ? -9'sd256 : 9'sd255);
-    wire signed [8:0] y_next_vis = next_fits ? y_next_px[8:0] : (y_next_px[25] ? -9'sd256 : 9'sd255);
+    wire signed [8:0] y_calc_vis = y_fits    ? y_calc_px[8:0] : (y_calc_px[24] ? -9'sd256 : 9'sd255);
+    wire signed [8:0] y_next_vis = next_fits ? y_next_px[8:0] : (y_next_px[24] ? -9'sd256 : 9'sd255);
 
     // y = 240 - pix_y (center pix_y at y = 0) 
     // This pixel's height above the x-axis (-239 to +240): fits in 9 bits signed
@@ -195,8 +166,8 @@ module tt_um_hgoar_vga_plotter (
     // Tick marks every 16 pixels, 4 pixels either side of each axis
     wire near_x_axis = (pix_y >= ORIGIN_Y - 10'd5) & (pix_y < ORIGIN_Y + 10'd4);
     wire near_y_axis = (pix_x >= ORIGIN_X - 10'd5) & (pix_x < ORIGIN_X + 10'd4);
-    wire on_tick     = (near_x_axis & (pix_x[3:0] == 4'd0)) |
-                       (near_y_axis & (grid_y[3:0] == 4'd0));
+    wire on_tick     = (near_x_axis & (pix_x[4:0] == 5'd0)) |
+                       (near_y_axis & (grid_y[4:0] == 5'd0));
  
     // The first line that matches wins, so higher lines are drawn on top
     reg [5:0] colour;
@@ -223,6 +194,6 @@ module tt_um_hgoar_vga_plotter (
     assign uio_out = 8'h00;
     assign uio_oe  = 8'h00;
  
-    wire _unused_ok = &{ena, uio_in, ui_in[6], grid_y[9:6], zoom, pan_x, pan_y, zoom_changed, 1'b0};
+    wire _unused_ok = &{ena, uio_in, ui_in, grid_y[9:6], 1'b0};
  
 endmodule
