@@ -19,17 +19,18 @@ project:
   source_files:
     - "project.v"
     - "hvsync_generator.v"
+    - "coefficients.v"
 
 # The pinout of your project. Leave unused pins blank. DO NOT delete or add any pins.
 # This section is for the datasheet/website. Use descriptive names (e.g., RX, TX, MOSI, SCL, SEG_A, etc.).
 pinout:
   # Inputs
-  ui[0]: "zoom in"
-  ui[1]: "zoom out"
-  ui[2]: "pan left"
-  ui[3]: "pan right"
-  ui[4]: "pan up"
-  ui[5]: "pan down"
+  ui[0]: "coefficient select bit 0"
+  ui[1]: "coefficient select bit 1"
+  ui[2]: "coefficient load"
+  ui[3]: ""
+  ui[4]: ""
+  ui[5]: ""
   ui[6]: ""
   ui[7]: ""
 
@@ -44,14 +45,14 @@ pinout:
   uo[7]: "HSync"
 
   # Bidirectional pins (not used)
-  uio[0]: ""
-  uio[1]: ""
-  uio[2]: ""
-  uio[3]: ""
-  uio[4]: ""
-  uio[5]: ""
-  uio[6]: ""
-  uio[7]: ""
+  uio[0]: "coefficient value bit 0 (fixed point 5.3) "
+  uio[1]: "coefficient value bit 1"
+  uio[2]: "coefficient value bit 2"
+  uio[3]: "coefficient value bit 3"
+  uio[4]: "coefficient value bit 4"
+  uio[5]: "coefficient value bit 5"
+  uio[6]: "coefficient value bit 6"
+  uio[7]: "coefficient value bit 7 (sign bit)"
 
 # Do not change!
 yaml_version: 6
